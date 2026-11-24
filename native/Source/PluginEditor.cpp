@@ -1,6 +1,16 @@
 #include "PluginEditor.h"
 
-namespace { const juce::Colour background{0xff101311},text{0xffeef3e9},muted{0xffa2ada1},lime{0xffc0f58a}; }
+namespace {
+const juce::Colour background{0xff101311}, text{0xffeef3e9}, muted{0xffa2ada1}, lime{0xffc0f58a},
+                   amber{0xffffc285};
+
+juce::String timelinePosition(double seconds) {
+    const auto milliseconds = static_cast<juce::int64>(std::llround(seconds * 1000.0));
+    return juce::String(milliseconds / 60000) + ":"
+        + juce::String((milliseconds / 1000) % 60).paddedLeft('0', 2) + "."
+        + juce::String(milliseconds % 1000).paddedLeft('0', 3);
+}
+}
 IntentEditor::IntentEditor(IntentProcessor& p):AudioProcessorEditor(p),processor(p) {
     look.setColour(juce::ResizableWindow::backgroundColourId,background);
     look.setColour(juce::Label::textColourId,text);
@@ -38,21 +48,31 @@ IntentEditor::IntentEditor(IntentProcessor& p):AudioProcessorEditor(p),processor
     addAndMakeVisible(analyze);
     analyze.setTooltip("Scan the full REAPER project through this insert and build a chain.");
     analyze.onClick = [this] { startAnalysis(); };
+    addChildComponent(balance);
+    balance.setColour(juce::TextButton::buttonColourId, juce::Colour{0xff283521});
+    balance.setColour(juce::TextButton::textColourOffId, lime);
+    balance.setTooltip("Measure eligible REAPER tracks and gently reduce the loudest track faders.");
+    balance.onClick = [this] { startTrackBalance(); };
     resetDefaults.setColour(juce::TextButton::buttonColourId, juce::Colour{0xff283521});
     resetDefaults.setColour(juce::TextButton::textColourOffId, lime);
     resetDefaults.setTooltip("Restore the selected genre's audio controls and switches. Keep the prompt for Build direction.");
     resetDefaults.onClick = [this] {
         directionCancelled = true;
+        trackBalance.cancel();
+        balancing = false;
+        balance.setButtonText("Balance tracks");
         cancelAnalysis();
         apply.setEnabled(!pendingPlan.valid());
         comparison.setText({}, juce::dontSendNotification);
+        loudnessComparison.setText({}, juce::dontSendNotification);
+        scanDiagnostic.setText({}, juce::dontSendNotification);
         processor.resetToGenreDefaults(genre.getSelectedItemIndex());
         status.setText(genre.getText() + " defaults restored. Use Build direction to apply your keywords.",
                        juce::dontSendNotification);
     };
     addAndMakeVisible(resetDefaults);
     constexpr const char* ids[]={"warmth","punch","width","air","output","ceiling"};
-    constexpr const char* names[]={"Warmth","Punch","Width","Air","Output / dB","Ceiling / dBFS"};
+    constexpr const char* names[]={"Warmth","Punch","Width","Air","Output / dB","Ceiling / dBTP"};
     for(size_t i=0;i<sliders.size();++i){
         auto& slider=sliders[i];slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle(juce::Slider::TextBoxBelow,false,90,24);
@@ -64,23 +84,21 @@ IntentEditor::IntentEditor(IntentProcessor& p):AudioProcessorEditor(p),processor
         attachments[i]=std::make_unique<SliderAttachment>(p.parameters,ids[i],slider);
     }
     addAndMakeVisible(guard);addAndMakeVisible(bypass);
+    guard.setTooltip("Uses look-ahead gain reduction to control peaks between samples at Intent's output.");
     guardAttachment=std::make_unique<ButtonAttachment>(p.parameters,"guard",guard);
     bypassAttachment=std::make_unique<ButtonAttachment>(p.parameters,"bypass",bypass);
     addAndMakeVisible(status);status.setText("Ready. Choose a direction, or adjust the controls.",juce::dontSendNotification);
     status.setColour(juce::Label::textColourId,muted);
     addAndMakeVisible(meter);meter.setColour(juce::Label::textColourId,lime);
     addAndMakeVisible(comparison);comparison.setColour(juce::Label::textColourId,lime);
-    addAndMakeVisible(warning);
-#if INTENT_USE_MINILM
-    warning.setText("Local text analysis with MiniLM. Audio settings remain editable.", juce::dontSendNotification);
-#else
-    warning.setText("Keyword planner. MiniLM is available in the Windows x64 release.", juce::dontSendNotification);
-#endif
-    warning.setColour(juce::Label::textColourId,muted);
+    addAndMakeVisible(loudnessComparison);loudnessComparison.setColour(juce::Label::textColourId,lime);
+    addAndMakeVisible(scanDiagnostic);
+    scanDiagnostic.setColour(juce::Label::textColourId, amber);
     setSize(880,650);timerCallback();startTimerHz(20);
 }
 IntentEditor::~IntentEditor(){
     stopTimer();
+    trackBalance.cancel();
     cancelAnalysis();
     if (pendingPlan.valid())
         pendingPlan.wait();
@@ -88,7 +106,7 @@ IntentEditor::~IntentEditor(){
 }
 
 void IntentEditor::startDirection() {
-    if (pendingPlan.valid() || capturing)
+    if (pendingPlan.valid() || capturing || balancing)
         return;
     rememberControls();
     launchPlan(false);
@@ -101,6 +119,8 @@ void IntentEditor::rememberControls() {
     directionCancelled = false;
     requestedSettings = processor.currentSettings();
     comparison.setText({}, juce::dontSendNotification);
+    loudnessComparison.setText({}, juce::dontSendNotification);
+    scanDiagnostic.setText({}, juce::dontSendNotification);
 }
 
 bool IntentEditor::requestIsCurrent() const {
@@ -114,6 +134,8 @@ bool IntentEditor::requestIsCurrent() const {
 }
 
 void IntentEditor::startAnalysis() {
+    if (balancing)
+        return;
     if (pendingPlan.valid() && analyzing && !directionCancelled) {
         directionCancelled = true;
         cancelAnalysis();
@@ -158,6 +180,87 @@ void IntentEditor::startAnalysis() {
     lastScanActivity = std::chrono::steady_clock::now();
     lastScanProgress = 0.0;
     transport.start();
+}
+
+void IntentEditor::startTrackBalance() {
+    using State = intent::TrackBalance::State;
+    if (balancing) {
+        finishTrackBalance(State::idle);
+        return;
+    }
+    auto& transport = processor.transport;
+    if (pendingPlan.valid() || !transport.resolveProject() || !transport.canBalanceTracks())
+        return;
+    if (transport.playState() & 4) {
+        status.setText("Stop recording before balancing tracks.", juce::dontSendNotification);
+        return;
+    }
+    try {
+        const auto result = transport.startTrackBalance(trackBalance);
+        if (result != State::measuring) {
+            finishTrackBalance(result);
+            return;
+        }
+        balancing = true;
+        apply.setEnabled(false);
+        analyze.setEnabled(false);
+        resetDefaults.setEnabled(false);
+        balance.setButtonText("Cancel track balance");
+        status.setText("Measuring individual REAPER tracks…", juce::dontSendNotification);
+    } catch (const std::exception&) {
+        finishTrackBalance(State::failed);
+    }
+}
+
+void IntentEditor::pollTrackBalance() {
+    using State = intent::TrackBalance::State;
+    if (!balancing)
+        return;
+    try {
+        if (processor.transport.playState() & 4) {
+            finishTrackBalance(State::interrupted);
+            return;
+        }
+        const auto result = trackBalance.step();
+        if (result == State::measuring)
+            status.setText("Measuring individual tracks… "
+                + juce::String(static_cast<int>(trackBalance.progress() * 100.0)) + "%",
+                juce::dontSendNotification);
+        else
+            finishTrackBalance(result);
+    } catch (const std::exception&) {
+        finishTrackBalance(State::failed);
+    }
+}
+
+void IntentEditor::finishTrackBalance(intent::TrackBalance::State result) {
+    using State = intent::TrackBalance::State;
+    if (result == State::applied) {
+        comparison.setText({}, juce::dontSendNotification);
+        loudnessComparison.setText({}, juce::dontSendNotification);
+        scanDiagnostic.setText({}, juce::dontSendNotification);
+    }
+    juce::String message;
+    switch (result) {
+        case State::applied:
+            message = "Track balance applied to " + juce::String(trackBalance.changedTracks())
+                + (trackBalance.changedTracks() == 1 ? " fader. " : " faders. ")
+                + "Use Analyze & Build to master the new mix.";
+            break;
+        case State::alreadyBalanced: message = "Track faders already meet the balance targets."; break;
+        case State::notEnoughAudio: message = "Balance needs two audible audio tracks with no FX, automation, or separate routing."; break;
+        case State::soloed: message = "Clear track solo before balancing the project."; break;
+        case State::interrupted: message = "The project changed during track analysis. Run Balance tracks again."; break;
+        case State::failed: message = "Could not complete track balance."; break;
+        default: message = "Track balance canceled."; break;
+    }
+    trackBalance.cancel();
+    balancing = false;
+    apply.setEnabled(true);
+    analyze.setEnabled(true);
+    resetDefaults.setEnabled(true);
+    balance.setButtonText("Balance tracks");
+    status.setText(message, juce::dontSendNotification);
 }
 
 void IntentEditor::pollCapture() {
@@ -209,7 +312,7 @@ bool IntentEditor::launchPlan(bool fullScan) {
                 std::optional<intent::AudioPlan> result;
                 if (recording) {
                     auto settings = direction.settings;
-                    settings.guard = controls.guard;
+                    settings.guard = true;
                     settings.ceilingDb = controls.ceilingDb;
                     result = scan->plan(*recording, settings);
                 }
@@ -238,17 +341,38 @@ void IntentEditor::finishDirection() {
             if (result.audio) {
                 const auto& plan = *result.audio;
                 processor.applyAudioPlan(requestedGenre, requestedPrompt, plan);
+                const auto beforeLevel = plan.before.lufs && plan.after.lufs ? *plan.before.lufs : plan.before.rmsDb;
+                const auto afterLevel = plan.before.lufs && plan.after.lufs ? *plan.after.lufs : plan.after.rmsDb;
+                const auto peakTarget = std::min(-1.0f, plan.settings.ceilingDb);
                 status.setText(requestedSettings.bypass ? "Chain applied. Turn off Bypass to hear it."
-                              : std::abs(plan.after.rmsDb - plan.before.rmsDb) <= 1
+                              : plan.after.truePeakDb.value_or(plan.after.peakDb) > peakTarget + 0.1f
+                                  ? "Chain applied. Preview true peak exceeds the headroom target."
+                              : std::abs(afterLevel - beforeLevel) <= 1
                                   ? "Chain applied. Toggle Bypass to compare at similar levels."
                                   : "Chain applied. Peak headroom limited the level match.",
                                juce::dontSendNotification);
                 const auto pair = [](float before, float after) {
                     return juce::String(before, 1) + " → " + juce::String(after, 1);
                 };
+                const auto reading = [](std::optional<float> value) {
+                    return value ? juce::String(*value, 1) : juce::String("—");
+                };
+                loudnessComparison.setText("Integrated " + reading(plan.before.lufs) + " → " + reading(plan.after.lufs)
+                    + " LUFS    /    True peak " + reading(plan.before.truePeakDb) + " → "
+                    + reading(plan.after.truePeakDb) + " dBTP", juce::dontSendNotification);
                 comparison.setText("Full scan    RMS " + pair(plan.before.rmsDb, plan.after.rmsDb)
                     + " dBFS    /    Sample peak " + pair(plan.before.peakDb, plan.after.peakDb) + " dBFS",
                     juce::dontSendNotification);
+                if (plan.before.flatTopSeconds) {
+                    auto message = "Possible input clipping at " + timelinePosition(*plan.before.flatTopSeconds)
+                        + ". Check the signal before Intent.";
+                    if (plan.before.overloadSeconds)
+                        message += " Input also exceeded 0 dBFS at " + timelinePosition(*plan.before.overloadSeconds) + ".";
+                    scanDiagnostic.setText(message, juce::dontSendNotification);
+                } else if (plan.before.overloadSeconds) {
+                    scanDiagnostic.setText("Input exceeded 0 dBFS at " + timelinePosition(*plan.before.overloadSeconds)
+                        + ". Lower gain before Intent if overload persists.", juce::dontSendNotification);
+                }
             } else if (analyzing) {
                 status.setText("The scan found no usable audio at this insert.", juce::dontSendNotification);
             } else {
@@ -261,7 +385,7 @@ void IntentEditor::finishDirection() {
         }
     } catch (const std::exception&) {
         if (!directionCancelled)
-            status.setText(analyzing ? "Full-project analysis could not read or write temporary audio."
+            status.setText(analyzing ? "Could not measure the full project. Check temporary storage and try again."
                                     : "Could not complete the plan. Try again.", juce::dontSendNotification);
     }
     if (analyzing)
@@ -283,12 +407,21 @@ void IntentEditor::resized(){
     apply.setBounds(28,378,225,38);
     resetDefaults.setBounds(28,424,225,35);
     guard.setBounds(28,464,245,30);bypass.setBounds(28,495,225,30);
-    comparison.setBounds(282,500,568,25);
-    meter.setBounds(28,548,824,26);status.setBounds(28,580,824,30);warning.setBounds(28,616,824,24);
+    loudnessComparison.setBounds(282,488,568,22);
+    comparison.setBounds(282,510,568,22);
+    meter.setBounds(28,548,625,26);status.setBounds(28,580,824,30);scanDiagnostic.setBounds(28,616,824,24);
+    balance.setBounds(668,543,184,34);
 }
 void IntentEditor::timerCallback(){
     auto asDb=[](float gain){return gain>0?juce::String(juce::Decibels::gainToDecibels(gain),1):juce::String("-inf");};
-    meter.setText("INPUT  "+asDb(processor.inputPeak.load(std::memory_order_relaxed))+" dBFS     /     OUTPUT  "+asDb(processor.outputPeak.load(std::memory_order_relaxed))+" dBFS     /     block sample peaks",juce::dontSendNotification);
+    const auto now = std::chrono::steady_clock::now();
+    if (processor.guardHit.exchange(false, std::memory_order_relaxed))
+        guardVisibleUntil = now + std::chrono::milliseconds(1500);
+    if (!guard.getToggleState() || bypass.getToggleState())
+        guardVisibleUntil = {};
+    meter.setText("INPUT  "+asDb(processor.inputPeak.load(std::memory_order_relaxed))+" dBFS     /     OUTPUT  "
+        +asDb(processor.outputPeak.load(std::memory_order_relaxed))+" dBFS     /     "
+        +(now < guardVisibleUntil ? "Limiter reducing peaks" : "block sample peaks"),juce::dontSendNotification);
     // Host state can be restored while the editor is open. Do not overwrite active typing.
     if(!prompt.hasKeyboardFocus(true)){
         const auto saved=processor.parameters.state.getProperty("prompt").toString();
@@ -298,4 +431,8 @@ void IntentEditor::timerCallback(){
     if(genre.getSelectedItemIndex()!=savedGenre)genre.setSelectedItemIndex(savedGenre,juce::dontSendNotification);
     pollCapture();
     finishDirection();
+    if (!balance.isVisible() && !capturing && !pendingPlan.valid())
+        balance.setVisible(processor.transport.resolveProject() && processor.transport.canBalanceTracks());
+    balance.setEnabled(!capturing && !pendingPlan.valid());
+    pollTrackBalance();
 }

@@ -1,22 +1,22 @@
-# Intent native / 0.5.0 development slice
+# Intent native / 0.8.0 development slice
 
 This is the first C++ implementation of the plugin design. It processes audio; the browser concept remains a separate design tool.
 
 ## Implemented
 
 - Windows x64 VST3 and standalone application targets.
-- Mono/stereo audio with neutral startup settings and zero reported latency.
+- Mono/stereo audio with neutral startup settings and a fixed look-ahead delay of about 5 ms, reported to the host for compensation.
 - Warmth: a one-pole low-band gain adjustment around 180 Hz, up to ±2 dB.
 - Air: a one-pole high-band gain adjustment around 6 kHz, up to ±2.5 dB. This is broad tone shaping, not a precision parametric equalizer.
 - Punch: stereo-linked feed-forward compression; ratio varies from 1:1 to 3:1 above a fixed -18 dBFS sample detector threshold. Attack is 12 ms and release 120 ms. No automatic makeup gain.
 - Width: upper-side-band scaling from 80–120%, with existing low-frequency side content preserved. Mono remains mono.
-- Output trim, optional sample-peak hard clipping, and smoothed global bypass.
+- Output trim, a stereo-linked true-peak limiter with oversampled detection, and delay-aligned global bypass.
 - Eight host-automatable parameters, saved parameter state, genre/prompt metadata, native editor, and block sample-peak readouts.
 - Six genre starting points, exact keyword rules, and optional semantic interpretation by the bundled full-precision MiniLM model on Windows x64.
-- Analyze & Build runs a full-project pass in REAPER, adapts the settings to the audio at the insert, and reports before/after RMS and sample peaks.
+- Analyze & Build runs a full-project pass in REAPER and reports before/after integrated LUFS, true peak, RMS, and sample peak.
 - Fixed-memory processing with smoothed targets; no inference, file access, allocation, or locks in the DSP callback.
 
-**Planned:** linked-track mixing, reference analysis, integrated LUFS measurement, true-peak/look-ahead limiting, oversampling, and DAW export control. The optional guard uses sample-domain hard clipping and can distort peaks.
+**Planned:** balancing tracks with effects and complex routing, one combined mix-and-master pass, per-track EQ and dynamics, reference analysis, and DAW export control.
 
 ## Build on a fully installed Windows toolchain
 
@@ -61,15 +61,23 @@ Insert Intent on a stereo master bus or an individual track, choose a genre, typ
 
 Startup is neutral. Choose a genre and click **Reset to genre defaults** to restore all six knobs and both switches. **Build direction** applies keywords to Warmth, Punch, Width, and Air while preserving the output and switch settings. Reset retains the prompt so you can reapply it whenever you want. Peak meters show the most recent audio block.
 
+## Balance tracks
+
+On the REAPER master track, click **Balance tracks** to measure individual audio tracks and lower the loudest ones. This first pass reads each eligible track before its FX chain and compares integrated LUFS with the median of the eligible tracks. It only lowers faders. The calculated targets are limited to 6 dB below unity, and faders already below target keep their current setting.
+
+The pass skips muted tracks, folders, and tracks with FX, envelopes, or explicit sends or receives. At least two tracks with audible media are required. Canceling or editing the project during measurement discards the balance proposal. The fader changes use one REAPER undo step and save as ordinary REAPER fader settings when you save the project. Use **Analyze & Build** afterwards to master the new mix.
+
 ## Analyze & Build
 
 In REAPER, insert Intent on the master bus, choose a genre, enter a description, and click **Analyze & Build**. Intent starts playback at project zero, ignores the repeat range for the scan, and captures up to REAPER's project end. Keep the project open and let the scan finish. Intent stops the scan playback and restores the previous edit cursor and repeat setting. The pass runs at playback speed. Full-project analysis uses REAPER's integrated VST3 host, so the standalone and other hosts can still use the text-based **Build direction**.
 
-The planner uses the genre and text as a starting point, then applies bounded adjustments based on low and high energy, crest factor, and stereo correlation. A background worker uses temporary local storage for the full scan. Intent previews the actual DSP on the captured input, estimates output trim to bring the processed RMS back toward the original, and reduces that trim when peak headroom is tight. The preview shows the remeasured RMS and sample peak of the result in dBFS. LUFS and true peak are separate measurements planned for a later build.
+The planner uses the genre and text as a starting point, then applies bounded adjustments based on low and high energy, crest factor, and stereo correlation. A background worker uses temporary local storage for the full scan. Intent previews the actual DSP on the captured input. It uses integrated LUFS to level-match, falls back to RMS if the signal is too short or quiet for a gated reading, and uses true peak to budget headroom. The preview measures the same limiter used during playback, with the look-ahead delay removed from the analysis. Later FX and faders can change the final output.
 
-The five adjusted controls remain editable and take effect in real time when the scan finishes. Toggle **Bypass** to compare the settings with the input. A new scan overwrites these five controls. The ceiling and guard keep their current settings. The plugin receives the audio presented at the insert point, so a stereo master scan cannot independently rebalance its sources.
+The adjusted tone, dynamics, stereo width, and output trim remain editable. **Analyze & Build** enables the limiter automatically and keeps the current ceiling. Toggle **Bypass** to compare with the input. The plugin receives the audio presented at the insert point, so a stereo master scan cannot independently rebalance its sources.
 
-| Genre | Warmth | Punch | Width | Air | Output (dB) | Ceiling (dBFS) |
+The scan timestamps the first input sample above 0 dBFS and the first repeated flat peak that suggests existing hard clipping. Flat peaks can also come from intentionally shaped sounds, and summing other tracks can mask the shape. **True-peak limiter** uses gain reduction ahead of peaks at Intent's output. The meter shows when it is reducing gain. To address clipping already present at the input, reduce gain before the clipping stage or replace the clipped source with a clean take.
+
+| Genre | Warmth | Punch | Width | Air | Output (dB) | Ceiling (dBTP) |
 |---|---:|---:|---:|---:|---:|---:|
 | Electronic | 50% | 65% | 65% | 60% | −1 | −1 |
 | Hip-hop | 65% | 70% | 45% | 45% | −1.5 | −1 |
@@ -78,7 +86,7 @@ The five adjusted controls remain editable and take effect in real time when the
 | Jazz | 55% | 30% | 45% | 45% | 0 | −1.5 |
 | Ambient | 60% | 20% | 80% | 65% | −1 | −1.5 |
 
-Every genre starts with the sample-peak guard and bypass off. The ceiling controls the sample-peak guard when you turn it on.
+Every genre starts with the limiter and bypass off. Projects saved with the previous peak guard enabled load with the true-peak limiter enabled.
 
 ## How Build direction interprets text
 
@@ -86,7 +94,7 @@ Try “Give the sub bass more heft and stretch the stereo field.” Intent split
 
 The model and tokenizer are bundled with the Windows plugin. Inference runs on a worker after you click **Build direction**. The first semantic request also loads the model and computes the reference embeddings. The audio thread uses the resolved knob values. Project reload and offline rendering use the saved knob values directly.
 
-The model is English and trained for general sentence similarity. Unsupported or ambiguous phrases can be skipped or misunderstood. Applying a direction preserves output trim, ceiling, guard, and bypass. Mac and other non-Windows builds use the keyword planner.
+The model is English and trained for general sentence similarity. Unsupported or ambiguous phrases can be skipped or misunderstood. Applying a text direction preserves the output trim, ceiling, limiter, and bypass. Mac and other non-Windows builds use the keyword planner.
 
 ## Tests and boundaries
 

@@ -10,8 +10,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout IntentProcessor::layout() {
     for (int i=0;i<4;++i)
         result.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{ids[i],1},names[i],0.0f,100.0f,i==1?0.0f:50.0f));
     result.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"output",1},"Output (dB)",-24.0f,12.0f,0.0f));
-    result.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"ceiling",1},"Sample peak ceiling (dBFS)",-3.0f,-0.1f,-1.0f));
-    result.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"guard",1},"Sample peak guard",false));
+    result.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"ceiling",1},"True peak ceiling (dBTP)",-3.0f,-0.1f,-1.0f));
+    result.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"guard",1},"True peak limiter",false));
     result.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"bypass",1},"Bypass",false));
     return result;
 }
@@ -25,7 +25,11 @@ IntentProcessor::IntentProcessor()
     parameters.state.setProperty("genre",0,nullptr);
     parameters.state.setProperty("prompt","Warm low end, punchy drums, wide and airy",nullptr);
 }
-void IntentProcessor::prepareToPlay(double rate,int) { engine.prepare(rate); capture.prepare(rate); setLatencySamples(0); }
+void IntentProcessor::prepareToPlay(double rate,int) {
+    engine.prepare(rate);
+    capture.prepare(rate);
+    setLatencySamples(engine.latencySamples());
+}
 bool IntentProcessor::isBusesLayoutSupported(const BusesLayout& b) const {
     const auto out=b.getMainOutputChannelSet();
     return (out==juce::AudioChannelSet::mono() || out==juce::AudioChannelSet::stereo()) && out==b.getMainInputChannelSet();
@@ -50,7 +54,8 @@ void IntentProcessor::process(juce::AudioBuffer<float>& b,bool forceBypass) {
                     capture.record(b.getArrayOfReadPointers(), count, b.getNumSamples(), *frame);
     auto s = currentSettings();
     s.bypass = forceBypass || s.bypass;
-    engine.process(b.getArrayOfWritePointers(),count,b.getNumSamples(),s);
+    if (engine.process(b.getArrayOfWritePointers(),count,b.getNumSamples(),s))
+        guardHit.store(true, std::memory_order_relaxed);
     float outPeak=0;
     for(int c=0;c<count;++c)outPeak=std::max(outPeak,b.getMagnitude(c,0,b.getNumSamples()));
     inputPeak.store(inPeak,std::memory_order_relaxed); outputPeak.store(outPeak,std::memory_order_relaxed);
@@ -106,7 +111,7 @@ void IntentProcessor::applyDirectionPlan(int genre, const juce::String& prompt, 
     parameters.state.setProperty("prompt",prompt.substring(0, 500),nullptr);
 }
 void IntentProcessor::applyAudioPlan(int genre, const juce::String& prompt, const intent::AudioPlan& plan) {
-    applySettings(plan.settings, 5);
+    applySettings(plan.settings, 7);
     parameters.state.setProperty("genre", intent::genreIndex(genre), nullptr);
     parameters.state.setProperty("prompt", prompt.substring(0, 500), nullptr);
 }

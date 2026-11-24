@@ -1,4 +1,5 @@
 #include "FullScan.h"
+#include "LoudnessMeter.h"
 #include <stdexcept>
 #include <thread>
 
@@ -104,14 +105,34 @@ std::optional<AudioPlan> FullScan::plan(const Recording& recording, Settings set
         throw std::runtime_error("Could not read temporary scan audio.");
     constexpr int blockSize = 4096;
     std::array<StereoFrame, blockSize> interleaved;
+    std::array<float, blockSize * 2> loudnessInput;
     std::array<std::array<float, blockSize>, 2> audio;
     const std::array<float*, 2> samples {audio[0].data(), audio[1].data()};
     auto measurePass = [&](const Settings* processing) -> std::optional<AudioMetrics> {
         if (!input.setPosition(0))
             throw std::runtime_error("Could not rewind scan audio.");
         Engine engine;
-        engine.prepare(recording.sampleRate);
-        MetricsAccumulator meter(recording.sampleRate, recording.channels);
+        if (processing != nullptr)
+            engine.prepare(recording.sampleRate);
+        const auto latency = engine.latencySamples();
+        int toSkip = latency;
+        MetricsAccumulator meter(recording.sampleRate, recording.channels, processing == nullptr);
+        LoudnessMeter loudnessMeter(recording.sampleRate, recording.channels);
+        const auto processAndMeasure = [&](int count) {
+            if (processing != nullptr)
+                engine.process(samples.data(), recording.channels, count, *processing);
+            const auto skip = std::min(toSkip, count);
+            toSkip -= skip;
+            const auto measured = count - skip;
+            if (measured == 0)
+                return;
+            const std::array<const float*, 2> aligned {samples[0] + skip, samples[1] + skip};
+            meter.add(aligned.data(), measured);
+            for (int i = 0; i < measured; ++i)
+                for (int channel = 0; channel < recording.channels; ++channel)
+                    loudnessInput[i * recording.channels + channel] = aligned[channel][i];
+            loudnessMeter.add(loudnessInput.data(), static_cast<size_t>(measured));
+        };
         for (std::int64_t offset = 0; offset < recording.frames;) {
             if (state.load() != captured)
                 return {};
@@ -123,12 +144,23 @@ std::optional<AudioPlan> FullScan::plan(const Recording& recording, Settings set
                 audio[0][i] = interleaved[static_cast<size_t>(i)][0];
                 audio[1][i] = interleaved[static_cast<size_t>(i)][1];
             }
-            if (processing != nullptr)
-                engine.process(samples.data(), recording.channels, count, *processing);
-            meter.add(samples.data(), count);
+            processAndMeasure(count);
             offset += count;
         }
-        return meter.metrics();
+        for (int remaining = latency; remaining > 0;) {
+            if (state.load() != captured)
+                return {};
+            const auto count = std::min(blockSize, remaining);
+            for (auto& channel : audio)
+                std::fill_n(channel.data(), count, 0.0f);
+            processAndMeasure(count);
+            remaining -= count;
+        }
+        auto metrics = meter.metrics();
+        const auto reading = loudnessMeter.finish();
+        metrics.lufs = reading.lufs;
+        metrics.truePeakDb = reading.truePeakDb;
+        return metrics;
     };
     return buildAudioPlan(settings, recording.channels, measurePass);
 }

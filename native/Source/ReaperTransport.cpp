@@ -29,15 +29,42 @@ void ReaperTransport::setIHostApplication(Steinberg::FUnknown* host) {
     functions.seek = reinterpret_cast<decltype(functions.seek)>(reaperHost->getReaperApi("SetEditCurPos2"));
     functions.play = reinterpret_cast<decltype(functions.play)>(reaperHost->getReaperApi("OnPlayButtonEx"));
     functions.stop = reinterpret_cast<decltype(functions.stop)>(reaperHost->getReaperApi("OnStopButtonEx"));
+    auto bind = [reaperHost](auto& function, const char* name) {
+        function = reinterpret_cast<std::decay_t<decltype(function)>>(reaperHost->getReaperApi(name));
+    };
+    intent::TrackBalance::Api tracks;
+    bind(tracks.master, "GetMasterTrack");
+    bind(tracks.trackCount, "CountTracks");
+    bind(tracks.track, "GetTrack");
+    bind(tracks.parent, "GetParentTrack");
+    bind(tracks.get, "GetMediaTrackInfo_Value");
+    bind(tracks.set, "SetMediaTrackInfo_Value");
+    bind(tracks.items, "CountTrackMediaItems");
+    bind(tracks.effects, "TrackFX_GetCount");
+    bind(tracks.envelopes, "CountTrackEnvelopes");
+    bind(tracks.sends, "GetTrackNumSends");
+    bind(tracks.revision, "GetProjectStateChangeCount");
+    bind(tracks.access, "CreateTrackAudioAccessor");
+    bind(tracks.close, "DestroyAudioAccessor");
+    bind(tracks.begin, "GetAudioAccessorStartTime");
+    bind(tracks.end, "GetAudioAccessorEndTime");
+    bind(tracks.samples, "GetAudioAccessorSamples");
+    bind(tracks.beginUndo, "Undo_BeginBlock2");
+    bind(tracks.endUndo, "Undo_EndBlock2");
+    bind(tracks.refresh, "UpdateArrange");
     if (reaperContext != nullptr)
         reaperContext->release();
     reaperContext = reaperHost;
     setApi(functions);
+    setTrackApi(tracks);
 }
 
 bool ReaperTransport::resolveProject() noexcept {
-    if (reaperContext != nullptr)
-        api.project = static_cast<ReaProject*>(static_cast<reaper::IReaperHostApplication*>(reaperContext)->getReaperParent(3));
+    if (reaperContext != nullptr) {
+        auto* host = static_cast<reaper::IReaperHostApplication*>(reaperContext);
+        api.project = static_cast<ReaProject*>(host->getReaperParent(3));
+        trackApi.hostTrack = static_cast<MediaTrack*>(host->getReaperParent(1));
+    }
     return api.project && api.length && api.cursor && api.rate && api.playState
         && api.repeat && api.seek && api.play && api.stop;
 }

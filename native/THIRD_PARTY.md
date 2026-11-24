@@ -7,6 +7,12 @@
 
 The asset fetcher verifies SHA-256 hashes and bundles the applicable license and third-party notice files alongside the model.
 
+## libebur128 1.2.6
+
+The native full-project analyzer statically links libebur128 for integrated loudness and true-peak measurement. The source is vendored from upstream commit `67b33abe1558160ed76ada1322329b0e9e058b02`. See the [pinned upstream source](https://github.com/jiixyj/libebur128/tree/67b33abe1558160ed76ada1322329b0e9e058b02).
+
+The library is MIT licensed. Its bundled queue compatibility header has a three-clause BSD notice. Both notices are included in the Windows release bundle.
+
 ## JUCE 8.0.6
 
 Source: https://github.com/juce-framework/JUCE/tree/8.0.6

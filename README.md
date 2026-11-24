@@ -6,7 +6,9 @@ Intent turns a genre and a short description into an editable mixing or masterin
 
 Version 0.5.0 makes **Analyze & Build** a full-project scan in REAPER. Insert Intent on the master bus, choose a genre, describe the sound, and click the button. Intent plays the project from start to end, then applies editable settings and shows the measured RMS and sample peak before and after. REAPER scans the stable release folder at `releases/windows-x64/` on this machine.
 
-**Build direction** still uses the local MiniLM classifier for text-only planning. Linked mixing, LUFS measurement, and true-peak limiting remain future milestones. See `native/README.md` for usage and build instructions.
+Version 0.7.0 automatically enables a look-ahead true-peak limiter after **Analyze & Build**. The full scan shows integrated LUFS and true-peak comparisons using the same processing as playback. **Build direction** uses the local MiniLM classifier for text-only planning. See `native/README.md` for usage and build instructions.
+
+Version 0.8.0 adds **Balance tracks** on the REAPER master track. It measures eligible audio tracks individually and makes conservative fader cuts. REAPER saves the fader changes with the project.
 
 ## Open the design
 

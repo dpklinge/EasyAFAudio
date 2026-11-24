@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "TrackBalance.h"
 
 struct ReaProject;
 
@@ -25,10 +26,16 @@ public:
     bool runsAtNormalSpeed() const { return std::abs(api.rate(api.project) - 1.0) < 0.000001; }
     void start();
     void finish();
+    bool canBalanceTracks() const { return intent::TrackBalance::available(trackApi, api.project); }
+    intent::TrackBalance::State startTrackBalance(intent::TrackBalance& balance) const {
+        return balance.start(trackApi, api.project);
+    }
     void setApi(Api functions) { api = functions; }
+    void setTrackApi(intent::TrackBalance::Api functions) { trackApi = functions; }
 
 private:
     Api api;
+    intent::TrackBalance::Api trackApi;
     Steinberg::FUnknown* reaperContext = nullptr;
     double savedCursor = 0.0;
     int savedRepeat = 0;

@@ -16,6 +16,9 @@ private:
     void startAnalysis();
     void pollCapture();
     void cancelAnalysis();
+    void startTrackBalance();
+    void pollTrackBalance();
+    void finishTrackBalance(intent::TrackBalance::State);
     bool launchPlan(bool fullScan);
     void rememberControls();
     bool requestIsCurrent() const;
@@ -26,11 +29,13 @@ private:
     juce::TextEditor prompt;
     juce::TextButton apply {"Build direction"};
     juce::TextButton analyze {"Analyze & Build"};
+    juce::TextButton balance {"Balance tracks"};
     juce::TextButton resetDefaults {"Reset to genre defaults"};
-    juce::Label subtitle, version, promptLabel, status, meter, warning, comparison;
+    juce::Label subtitle, version, promptLabel, status, meter, scanDiagnostic, loudnessComparison, comparison;
+    intent::TrackBalance trackBalance;
     std::array<juce::Slider,6> sliders;
     std::array<juce::Label,6> labels;
-    juce::ToggleButton guard {"Sample peak guard (hard clip)"}, bypass {"Bypass"};
+    juce::ToggleButton guard {"True-peak limiter"}, bypass {"Bypass"};
     using SliderAttachment=juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment=juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::array<std::unique_ptr<SliderAttachment>,6> attachments;
@@ -45,8 +50,10 @@ private:
     unsigned requestedStateRevision = 0;
     intent::Settings requestedSettings;
     std::chrono::steady_clock::time_point lastScanActivity;
+    std::chrono::steady_clock::time_point guardVisibleUntil {};
     double lastScanProgress = 0.0;
     bool capturing = false, analyzing = false;
     bool directionCancelled = false;
+    bool balancing = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(IntentEditor)
 };

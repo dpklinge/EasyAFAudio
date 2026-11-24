@@ -39,6 +39,7 @@ public:
     void resetToGenreDefaults(int genre);
     juce::AudioProcessorValueTreeState parameters;
     std::atomic<float> inputPeak {0}, outputPeak {0};
+    std::atomic<bool> guardHit {false};
     intent::FullScan capture;
     ReaperTransport transport;
 private:

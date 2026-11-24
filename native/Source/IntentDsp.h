@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include "LookaheadLimiter.h"
 
 namespace intent {
 struct Settings {
@@ -11,26 +12,28 @@ struct Settings {
 };
 
 // Fixed-memory DSP. No dependency on JUCE, the UI, or the planning engine.
-// Peak guard is a sample-domain hard clip, NOT a true-peak/look-ahead limiter.
 class Engine {
 public:
-    void prepare(double rate) noexcept {
-        sampleRate = std::isfinite(rate) && rate >= 8000 ? rate : 44100;
+    void prepare(double rate) {
+        sampleRate = std::isfinite(rate) && rate >= 8000 ? std::min(rate, 384000.0) : 44100;
         lowCoeff = coefficient(180);
         highCoeff = coefficient(std::min(6000.0, sampleRate * 0.35));
         sideCoeff = coefficient(140);
         smooth = 1.0f - static_cast<float>(std::exp(-1.0 / (0.02 * sampleRate)));
         attack = static_cast<float>(std::exp(-1.0 / (0.012 * sampleRate)));
         release = static_cast<float>(std::exp(-1.0 / (0.12 * sampleRate)));
+        limiter.prepare(sampleRate);
         reset();
     }
     void reset() noexcept {
         low = {}; high = {}; sideLow = 0; compressorGain = 1;
         lowGain = highGain = outputGain = stereoWidth = 1;
-        wet = 1; ratio = 1; guardMix = 0; ceiling = dbToGain(-1);
+        wet = 1; ratio = 1;
+        limiter.reset();
     }
-    void process(float* const* channels, int count, int samples, const Settings& s) noexcept {
-        if (count < 1 || count > 2 || samples <= 0) return;
+    int latencySamples() const noexcept { return limiter.latencySamples(); }
+    bool process(float* const* channels, int count, int samples, const Settings& s) noexcept {
+        if (count < 1 || count > 2 || samples <= 0) return false;
         const auto lowTarget = dbToGain((bounded(s.warmth, 0, 100, 50) - 50) * 0.04f);
         const auto highTarget = dbToGain((bounded(s.air, 0, 100, 50) - 50) * 0.05f);
         const auto widthTarget = 0.8f + bounded(s.width, 0, 100, 50) * 0.004f;
@@ -43,8 +46,6 @@ public:
             stereoWidth += smooth * (widthTarget - stereoWidth);
             outputGain += smooth * (outputTarget - outputGain);
             ratio += smooth * (ratioTarget - ratio);
-            ceiling += smooth * (ceilingTarget - ceiling);
-            guardMix += smooth * ((s.guard ? 1.0f : 0.0f) - guardMix);
             wet += smooth * ((s.bypass ? 0.0f : 1.0f) - wet);
             std::array<float, 2> dry {}, signal {};
             for (int c = 0; c < count; ++c) {
@@ -68,14 +69,11 @@ public:
             const float time = targetGain < compressorGain ? attack : release;
             compressorGain = time * compressorGain + (1 - time) * targetGain;
             for (int c = 0; c < count; ++c) {
-                float value = signal[c] * compressorGain * outputGain;
-                const float clipped = std::clamp(value, -ceiling, ceiling);
-                value += guardMix * (clipped - value);
-                // Once engaged, enforce the ceiling even while the enable ramp settles.
-                if (s.guard) value = std::clamp(value, -ceilingTarget, ceilingTarget);
+                const float value = signal[c] * compressorGain * outputGain;
                 channels[c][i] = clean(dry[c] + wet * (value - dry[c]));
             }
         }
+        return limiter.process(channels, count, samples, ceilingTarget, s.guard && !s.bypass);
     }
     static float dbToGain(float db) noexcept { return std::pow(10.0f, db / 20.0f); }
 private:
@@ -92,6 +90,7 @@ private:
     std::array<float, 2> low {}, high {};
     float lowCoeff {}, highCoeff {}, sideCoeff {}, sideLow {}, smooth {}, attack {}, release {};
     float lowGain = 1, highGain = 1, outputGain = 1, stereoWidth = 1;
-    float compressorGain = 1, wet = 1, ratio = 1, guardMix = 0, ceiling = 1;
+    float compressorGain = 1, wet = 1, ratio = 1;
+    LookaheadLimiter limiter;
 };
 }

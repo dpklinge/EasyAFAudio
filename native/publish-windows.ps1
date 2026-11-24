@@ -49,6 +49,13 @@ try {
             $requiredFiles += @{ Source = $asset; Relative = $relative }
         }
     }
+    if ([version]$version -ge [version]'0.6.0') {
+        $notices = Join-Path $PSScriptRoot 'third_party/libebur128'
+        $requiredFiles += @(
+            @{ Source = (Join-Path $notices 'COPYING'); Relative = 'Intent.vst3/Contents/Resources/libebur128-LICENSE.txt' }
+            @{ Source = (Join-Path $notices 'QUEUE-LICENSE.txt'); Relative = 'Intent.vst3/Contents/Resources/libebur128-Queue-LICENSE.txt' }
+        )
+    }
     $alreadyPublished = $true
     foreach ($file in $requiredFiles) {
         $installed = Join-Path $current $file.Relative
@@ -66,6 +73,11 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     Copy-Item -LiteralPath $bundle -Destination (Join-Path $stage 'Intent.vst3') -Recurse
     Copy-Item -LiteralPath $standalone -Destination (Join-Path $stage 'Intent.exe')
+    if ([version]$version -ge [version]'0.6.0') {
+        $resources = Join-Path $stage 'Intent.vst3/Contents/Resources'
+        Copy-Item -LiteralPath (Join-Path $notices 'COPYING') -Destination (Join-Path $resources 'libebur128-LICENSE.txt')
+        Copy-Item -LiteralPath (Join-Path $notices 'QUEUE-LICENSE.txt') -Destination (Join-Path $resources 'libebur128-Queue-LICENSE.txt')
+    }
     @(
         "Intent $version / Windows x64"
         'Intent.vst3 is the complete REAPER plugin bundle.'
