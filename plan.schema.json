@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Intent preview processing plan",
+  "type": "object",
+  "required": ["schemaVersion", "kind", "engine", "audioAnalyzed", "genre", "prompt", "mode", "warmth", "punch", "width", "air", "lufs", "ceiling", "enabled", "notes", "derivedSuggestions"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "design-plan"},
+    "engine": {"const": "deterministic-keyword-preview"},
+    "audioAnalyzed": {"const": false},
+    "genre": {"enum": ["Electronic", "Hip-hop", "Pop", "Rock", "Jazz", "Ambient"]},
+    "prompt": {"type": "string", "maxLength": 500},
+    "mode": {"enum": ["master", "mix"]},
+    "warmth": {"type": "number", "minimum": 0, "maximum": 100},
+    "punch": {"type": "number", "minimum": 0, "maximum": 100},
+    "width": {"type": "number", "minimum": 0, "maximum": 100},
+    "air": {"type": "number", "minimum": 0, "maximum": 100},
+    "lufs": {"type": "number", "minimum": -24, "maximum": -6},
+    "ceiling": {"type": "number", "minimum": -3, "maximum": -0.1},
+    "enabled": {"type": "object", "required": ["eq", "dynamics", "stereo", "limiter"], "additionalProperties": false, "properties": {"eq": {"type": "boolean"}, "dynamics": {"type": "boolean"}, "stereo": {"type": "boolean"}, "limiter": {"type": "boolean"}}},
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "derivedSuggestions": {"type": "object", "required": ["low", "air", "ratio", "width"], "additionalProperties": false, "properties": {"low": {"type": "number", "minimum": -2, "maximum": 2}, "air": {"type": "number", "minimum": -2.5, "maximum": 2.5}, "ratio": {"type": "number", "minimum": 1, "maximum": 3}, "width": {"type": "number", "minimum": 80, "maximum": 120}}}
+  }
+}

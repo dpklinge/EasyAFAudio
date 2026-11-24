@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Intent — AI mix & master concept</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<main class="plugin">
+  <header><a class="brand" href="#">intent<span> / </span></a><span class="tag">MIX & MASTER</span><span class="preview">INTERACTIVE DESIGN · NO AUDIO PROCESSING</span><button id="reset" class="quiet">Reset</button></header>
+  <div class="workspace">
+    <aside>
+      <p class="eyebrow">01 / DIRECTION</p><h1>Your sound.<br>A clear intention.</h1><p class="muted">Start with a genre. Tell us where you want to take it.</p>
+      <fieldset class="mode"><legend>Workflow</legend><label><input type="radio" name="mode" value="master" checked> Master</label><label><input type="radio" name="mode" value="mix"> Mix</label></fieldset>
+      <label class="field" for="genre">Genre<select id="genre"><option>Electronic</option><option>Hip-hop</option><option>Pop</option><option>Rock</option><option>Jazz</option><option>Ambient</option></select></label>
+      <label class="field" for="prompt">Describe the feeling<textarea id="prompt" rows="3" maxlength="500">Warm low end, punchy drums, wide and airy</textarea></label>
+      <div class="chips" aria-label="Add a keyword"><button data-word="warm">+ Warm</button><button data-word="punchy">+ Punchy</button><button data-word="intimate">+ Intimate</button></div>
+      <button id="generate" class="primary">Build a direction <span>↗</span></button>
+      <p class="hint">Concept preview uses transparent keyword rules. AI analysis is planned.</p>
+      <div class="session"><span class="dot"></span><div id="session">Stereo master bus<br><small>Full mix in · shaped stereo out</small></div></div>
+    </aside>
+    <section class="main">
+      <div class="section-heading"><div><p class="eyebrow">02 / SHAPE</p><h2 id="direction">Electronic / Warm & expansive</h2></div><span class="pill">ILLUSTRATIVE CURVE</span></div>
+      <div class="graph"><div class="graph-top"><span>Tonal direction</span><span>Relative EQ gain · dB</span></div><svg id="curve" viewBox="0 0 700 190" role="img" aria-label="Illustrative equalizer suggestion, not a measured spectrum"><g class="grid"><path d="M30 25H675 M30 85H675 M30 145H675 M30 25V145 M190 25V145 M350 25V145 M510 25V145 M675 25V145"/></g><g class="axis"><text x="0" y="29">+3</text><text x="8" y="89">0</text><text x="0" y="149">−3</text><text x="30" y="177">30 Hz</text><text x="177" y="177">150</text><text x="340" y="177">1k</text><text x="500" y="177">5k</text><text x="645" y="177">20k</text></g><path id="eq-line" d=""/><g id="eq-points"></g></svg><div class="graph-bottom"><span>LOW END</span><span>BODY</span><span>PRESENCE</span><span>AIR</span></div></div>
+      <div class="controls"><label>Warmth <output id="warmth-value"></output><input id="warmth" type="range" min="0" max="100" value="65"></label><label>Punch <output id="punch-value"></output><input id="punch" type="range" min="0" max="100" value="60"></label><label>Width <output id="width-value"></output><input id="width" type="range" min="0" max="100" value="65"></label><label>Air <output id="air-value"></output><input id="air" type="range" min="0" max="100" value="60"></label></div>
+      <div class="section-heading chain-title"><div><p class="eyebrow">03 / REFINE</p><h2>A chain you can understand.</h2></div><button id="compare" class="quiet" aria-pressed="false">View original settings</button></div>
+      <div id="chain" class="chain"></div>
+      <div class="note"><span>✦</span><p id="rationale" aria-live="polite"></p></div>
+    </section>
+    <section class="delivery">
+      <p class="eyebrow">04 / DELIVERY</p><h2>Finish with intent.</h2><p class="muted" id="workflow-copy">Design targets for your stereo master. Final loudness needs a full-track measurement.</p>
+      <label class="field" for="lufs">Loudness target <span>LUFS-I</span><input type="number" id="lufs" min="-24" max="-6" step="0.5" value="-12"></label>
+      <label class="field" for="ceiling">True-peak ceiling <span>dBTP</span><input type="number" id="ceiling" min="-3" max="-0.1" step="0.1" value="-1"></label>
+      <p class="hint">Creative starting points, not platform requirements. Lower loudness can preserve more transients.</p>
+      <div class="divider"></div><h3>Keep the decision.</h3><p class="muted">Save this direction as an editable processing plan.</p><button id="save" class="secondary">Export plan <span>↓</span></button>
+      <p id="status" class="hint" role="status">Ready to explore.</p>
+      <div class="planned"><span class="dot"></span> PLANNED PLUGIN<br><strong>VST3 / Windows first</strong><small>AU / macOS next</small></div>
+    </section>
+  </div>
+  <footer><span>INTENT / CONCEPT 0.1</span><span>Editable decisions. Your final say.</span><span>Local preview · nothing uploaded</span></footer>
+</main><script src="planner.js"></script><script src="app.js"></script>
+</body></html>
